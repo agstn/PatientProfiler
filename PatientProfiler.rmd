@@ -1,0 +1,633 @@
+---
+title: "Patient Profiler (Proof of Concept)"
+date:  "`r format(Sys.time(),format='%A %d %b %Y')`" 
+output: 
+   flexdashboard::flex_dashboard:
+   vertical_layout: fill
+   # vertical_layout: scroll
+   self_contained: true
+   theme: default
+   source_code: embed
+---
+
+
+```{r setup-main, include=FALSE}
+# Knitr options
+knitr::opts_chunk$set(echo = FALSE, 
+                      eval = TRUE,
+                      warning = FALSE, 
+                      message = FALSE, 
+                      comment = NA, 
+                      cache = FALSE)
+
+pacman::p_load(flexdashboard)
+```
+
+```{r setup-packages, include=FALSE}
+pacman::p_load(tidyverse, rio, labelled)
+pacman::p_load(patientProfilesVis, clinUtils)
+pacman::p_load(plotly, sparkline)
+pacman::p_load(reactable, reactablefmtr)
+```
+
+```{r setup-data, include=FALSE}
+pathExampleDatasets <- list.files(
+   path = './dat/',
+   pattern = "*.xpt",
+   full.names = TRUE)
+
+data <- loadDataADaMSDTM(files = pathExampleDatasets)
+labelVarsADaM <- attr(data, "labelVars")
+
+set.seed(123)
+
+id <- c('01-701-1148',
+        '01-701-1192',
+        '01-701-1211',
+        '01-704-1445',
+        '01-718-1371',
+        '01-718-1427',
+        sample(data$ADSL$USUBJID, 20)) %>% 
+   unique()
+```
+
+```{r derive-data, include=FALSE}
+# subject data
+subj <- data$ADSL %>% 
+   filter(USUBJID %in% id) %>% 
+   select(USUBJID, SEX, AGE, RACE, ETHNIC, BMIBL, TRT01P, DCDECOD) %>%
+   mutate(SEX_ICON = case_when(
+      SEX == "M" ~ "male",
+      SEX == "F" ~ "female")) %>%
+   mutate(SEX_COL = case_when(
+      SEX == "M" ~ '#01A6EA',
+      SEX == "F" ~ '#FFB1CB')) %>% 
+   mutate(BMIBL_COL = case_when(
+      BMIBL > 30   ~ '#d7191c',
+      BMIBL > 25   ~ '#fdae61',
+      BMIBL > 18.5 ~ '#abd9e9',
+      TRUE         ~ '#2c7bb6')) %>% 
+   mutate(DCDECOD_COL = case_when(
+      DCDECOD == "COMPLETED" ~  '#238823',
+      DCDECOD == "DEATH"     ~  '#d2222d',
+      TRUE                   ~  '#ffbf00'))
+
+# treatment exposure
+ex <- data$EX %>% 
+   filter(USUBJID %in% id) %>% 
+   mutate(USUBJID2 = USUBJID) %>% 
+   group_nest(USUBJID) %>% 
+   rowwise() %>% 
+   mutate(
+      exPlots = list(
+         subjectProfileIntervalPlot(
+            data = data,
+            paramVar = c(
+               "EXTRT", "EXDOSE", "EXDOSU", 
+               "EXDOSFRM", "EXDOSFRQ", "EXROUTE"
+            ), # "EXTPT" if available
+            timeStartVar = "EXSTDY",
+            timeEndVar = "EXENDY",
+            # optional:
+            colorVar = "EXDOSFRM",
+            subjectVar = 'USUBJID2',
+            title = "Treatment exposure",
+            alpha = 0.8,
+            labelVars = labelVarsADaM)),
+      exPlots_ggplotly = list(
+         ggplotly(exPlots[[1]][['1']] + 
+                     labs(caption = NULL,
+                          title = NULL) +
+                     xlab('Analysis Start/End Relative Date')+
+                     theme(legend.position='none'),
+                  width = 700,
+                  height = 200) %>% 
+            config(displayModeBar = F)
+      )
+   )
+
+# advese events
+adae <- data$ADAE %>% 
+   filter(USUBJID %in% id) %>% 
+   mutate(USUBJID2 = USUBJID) %>% 
+   group_nest(USUBJID) %>% 
+   rowwise() %>% 
+   mutate(
+      aePlots = list(
+         subjectProfileIntervalPlot(
+            data = data,
+            paramVar = "AETERM",
+            timeStartVar = "ASTDY",
+            timeEndVar = "AENDY",
+            colorVar = "AESEV",
+            subjectVar = 'USUBJID2',
+            labelVars = labelVarsADaM,
+            title = "Adverse events")
+      ),
+      aePlots_ggplotly = list(
+         ggplotly(aePlots[[1]][['1']] + 
+                     labs(caption = NULL,
+                          title = NULL) +
+                     xlab('Analysis Start/End Relative Date')+
+                     theme(legend.position='none'),
+                  width = 700,
+                  height = 300) %>% 
+            config(displayModeBar = F)
+      )
+   )
+
+# meds
+adcm <- data$ADCM %>% 
+   filter(USUBJID %in% id) %>% 
+   mutate(USUBJID2 = USUBJID) %>% 
+   group_nest(USUBJID) %>% 
+   rowwise() %>% 
+   mutate(
+      cmPlots = list(
+         subjectProfileIntervalPlot(
+            data = data,
+            paramVar = c(
+               "CMTRT", 
+               "CMDOSE", "CMDOSU", "CMROUTE", 
+               "CMDOSFRQ"),
+            timeStartVar = "ASTDY",
+            timeEndVar = "AENDY",
+            # optional:
+            paramGroupVar = "CMCLAS", # or CMINDC
+            colorVar = "CMCLAS", # or CMINDC
+            subjectVar = 'USUBJID2',
+            labelVars = labelVarsADaM,
+            title = "Concomitant medications",
+            # To zoom in axis scale in study time frame
+            # (to avoid scale is focused on negative pre-study time frame for CM)
+            timeTrans = getTimeTrans(type = "asinh-neg"), 
+            alpha = 0.8,
+            timeAlign = FALSE
+         )
+      ),
+      cmPlots_ggplotly = list(
+         ggplotly(cmPlots[[1]][['1']] + 
+                     labs(caption = NULL,
+                          title = NULL) +
+                     xlab('Analysis Start/End Relative Date')+
+                     theme(legend.position='none'),
+                  width = 700,
+                  height = 400) %>% 
+            config(displayModeBar = F)
+      )
+   )
+
+# adlbc
+adlbc_range <- data$ADLBC %>% 
+   filter(USUBJID %in% id) %>%
+   filter(str_sub(PARAMCD,1,1) != "_" ) %>%
+   drop_na(AVAL) %>% 
+   group_by(USUBJID, PARAMCD) %>% 
+   summarise(N    = n(),
+             A1LO = min(A1LO),
+             A1HI = max(A1HI),
+             MIN  = min(AVAL),
+             MAX  = max(AVAL)) %>% 
+   group_by(PARAMCD) %>% 
+   mutate(N_a   = max(N),
+          MIN_a = min(MIN),
+          MAX_a = max(MAX))
+
+adlbc <- data$ADLBC %>% 
+   filter(USUBJID %in% id) %>% 
+   filter(str_sub(PARAMCD,1,1) != "_" ) %>% 
+   select(USUBJID, PARCAT1, PARAMCD, PARAM, AVAL) %>%
+   drop_na(AVAL) %>% 
+   group_by(USUBJID, PARCAT1, PARAMCD, PARAM) %>% 
+   summarise(spk = list(AVAL)) %>% 
+   left_join(adlbc_range) %>% 
+   rowwise() %>% 
+   mutate(spk_l = list( 
+      sparkline(spk,
+                height = 50,
+                width = 145,
+                fillColor= FALSE,              # NO fill color
+                lineColor = '#404040',          # LINE color (gray 25)
+                minSpotColor= 'red',            # MIN value color
+                maxSpotColor= 'blue',           # MAX value color
+                spotColor   = '#404040',        # value color
+                highlightSpotColor= '#404040',
+                highlightLineColor= '#404040',
+                spotRadius = 3,                 # SIZE pixels circles
+                
+                normalRangeMin= A1LO,
+                normalRangeMax= A1HI,
+                normalRangeColor= '#e5e5e5',
+                
+                chartRangeMin= MIN_a,
+                chartRangeMax= MAX_a,
+                
+                chartRangeMinX= 1,
+                chartRangeMaxX= N_a)
+   ), .after = spk
+   )
+
+# adlbh
+adlbh_range <- data$ADLBH %>% 
+   filter(USUBJID %in% id) %>%
+   filter(str_sub(PARAMCD,1,1) != "_" ) %>%
+   drop_na(AVAL) %>% 
+   group_by(USUBJID, PARAMCD) %>% 
+   summarise(A1LO = min(A1LO),
+             A1HI = max(A1HI),
+             MIN  = min(AVAL),
+             MAX  = max(AVAL))
+
+adlbh <- data$ADLBH %>% 
+   filter(USUBJID %in% id) %>% 
+   filter(str_sub(PARAMCD,1,1) != "_" ) %>% 
+   select(USUBJID, PARCAT1, PARAMCD, PARAM, AVAL) %>%
+   drop_na(AVAL) %>% 
+   group_by(USUBJID, PARCAT1, PARAMCD, PARAM) %>% 
+   summarise(spk = list(AVAL)) %>% 
+   left_join(adlbh_range)
+
+# adlbhy
+adlbhy_range <- data$ADLBHY %>% 
+   filter(USUBJID %in% id) %>%
+   drop_na(AVAL) %>% 
+   group_by(USUBJID, PARAMCD) %>% 
+   summarise(A1LO = min(A1LO),
+             A1HI = max(A1HI),
+             MIN  = min(AVAL),
+             MAX  = max(AVAL))
+
+adlbhy <- data$ADLBHY %>% 
+   filter(USUBJID %in% id) %>% 
+   select(USUBJID, PARCAT1, PARAMCD, PARAM, AVAL) %>%
+   drop_na(AVAL) %>% 
+   group_by(USUBJID, PARCAT1, PARAMCD, PARAM) %>% 
+   summarise(spk = list(AVAL)) %>% 
+   left_join(adlbhy_range)
+```
+
+
+```{r data-combine}
+d_all <- left_join(subj,
+                   adlbc) %>% 
+   group_nest(USUBJID, SEX, AGE, RACE, ETHNIC, BMIBL, TRT01P, DCDECOD, DCDECOD_COL, SEX_ICON, SEX_COL, BMIBL_COL, 
+              .key = 'adlbc') %>% 
+   left_join(adlbh) %>% 
+   group_nest(USUBJID, SEX, AGE, RACE, ETHNIC, BMIBL, TRT01P, DCDECOD, DCDECOD_COL, SEX_ICON, SEX_COL, BMIBL_COL,
+              adlbc, 
+              .key = 'adlbh') %>% 
+   left_join(adlbhy) %>% 
+   group_nest(USUBJID, SEX, AGE, RACE, ETHNIC, BMIBL, TRT01P, DCDECOD, DCDECOD_COL, SEX_ICON, SEX_COL, BMIBL_COL,
+              adlbc, 
+              adlbh, 
+              .key = 'adlbhy') %>% 
+   left_join(ex   %>% select(USUBJID, exPlots_ggplotly)) %>% 
+   left_join(adae %>% select(USUBJID, aePlots_ggplotly)) %>% 
+   left_join(adcm %>% select(USUBJID, cmPlots_ggplotly))
+```
+
+Table {data-orientation=rows data-icon="fa-list"}
+===================================== 
+
+Row 
+-------------------------------------
+
+```{r table-subject}
+d_all %>% 
+   reactable(.,
+             bordered = TRUE,
+             highlight = TRUE,
+             searchable = TRUE,
+             filterable = TRUE,
+             pagination = FALSE,
+             height = 850,
+             theme = fivethirtyeight(),
+             defaultColDef = colDef( vAlign = 'center',
+                                     width = 100),
+             columnGroups = list(
+                colGroup(name = 'demographics', columns = c("SEX","AGE","RACE","ETHNIC","BMIBL")),
+                colGroup(name = 'laboratory',   columns = c("adlbc","adlbh","adlbhy")),
+                colGroup(name = 'trajectory',   columns = c("exPlots_ggplotly","aePlots_ggplotly","cmPlots_ggplotly"))
+             ),
+             columns = list(
+                USUBJID = colDef(width = 100,
+                                 style = list(fontWeight = 600)),
+                SEX_ICON = colDef(show = FALSE),
+                BMIBL_COL = colDef(show = FALSE),
+                SEX_COL   = colDef(show = FALSE),
+                SEX = colDef(
+                   width = 50,
+                   align = 'center',
+                   vAlign = 'center',
+                   cell = icon_sets(., 
+                                    icon_ref = "SEX_ICON",
+                                    icon_position = "over",
+                                    icon_size = 28,
+                                    icon_color_ref = "SEX_COL")
+                ),
+                BMIBL = colDef(
+                   width = 125,
+                   name = "BMI",
+                   align = 'left',
+                   html = TRUE,
+                   header = JS('function(column) {return column.name + `<div style="color: #999">kg/m<sup>2</sup></div>`}'),
+                   cell = data_bars(
+                      .,
+                      fill_color_ref = "BMIBL_COL",
+                      text_position = "outside-base",
+                      box_shadow = TRUE,
+                   )
+                ),
+                AGE = colDef(
+                   width = 75,
+                   align = 'center',
+                   vAlign = 'center',
+                   cell = gauge_chart(
+                      .,
+                      min_value = 51,
+                      max_value = 89,
+                      show_min_max = TRUE,
+                      fill_color = 'gray25'
+                   )
+                ),
+                ETHNIC = colDef(show = FALSE),
+                RACE = colDef(
+                   width = 200,
+                   name = "RACE/ETHNICITY",
+                   cell = merge_column( 
+                      .,
+                      merged_name = "ETHNIC",
+                      merged_position = 'below')
+                ),
+                TRT01P = colDef(
+                   width = 175,
+                ),
+                DCDECOD_COL = colDef(show = FALSE),
+                DCDECOD = colDef(
+                   width = 150,
+                   name = 'DISPOSITION',
+                   html = TRUE,
+                   cell = pill_buttons(
+                      data = .,
+                      color_ref = 'DCDECOD_COL',
+                      opacity = 0.9,
+                      box_shadow = TRUE,
+                      text_size = 10
+                   )
+                ),
+                cmPlots_ggplotly = colDef(
+                   name = 'ADCM',
+                   filterable = FALSE,
+                   # cell = function() htmltools::tags$button("CM"),
+                   cell = function(value){
+                      if (length(value)>1) htmltools::tags$button("CM")
+                   },
+                   details = function(index) {
+                      .$cmPlots_ggplotly[[index]]
+                   }
+                ),
+                exPlots_ggplotly = colDef(
+                   name = 'EX',
+                   filterable = FALSE,
+                   cell = function(value){
+                      if (length(value)>1) htmltools::tags$button("EX")
+                   },
+                   details = function(index) {
+                      .$exPlots_ggplotly[[index]]
+                   }
+                ),
+                aePlots_ggplotly = colDef(
+                   name = 'ADAE',
+                   filterable = FALSE,
+                   cell = function(value){
+                      if (length(value)>1) htmltools::tags$button("AE")
+                   },
+                   details = function(index) {
+                      .$aePlots_ggplotly[[index]]
+                   }
+                ),
+                adlbc = colDef(
+                   name = 'ADLBC',
+                   filterable = FALSE,
+                   cell = function() htmltools::tags$button("CHEM"),
+                   details = function(index){
+                      reactable(.$adlbc[[index]],
+                                bordered = TRUE,
+                                highlight = TRUE,
+                                searchable = TRUE,
+                                filterable = TRUE,
+                                pagination = FALSE,
+                                height = 500,
+                                theme = fivethirtyeight(),
+                                columns = list(
+                                   PARCAT1 = colDef(show = FALSE),
+                                   PARAM = colDef(show = FALSE),
+                                   PARAMCD = colDef(
+                                      name = "PARAM",
+                                      width = 250,
+                                      vAlign = 'center',
+                                      cell = merge_column( 
+                                         adlbc,
+                                         merged_name = "PARAM",
+                                         merged_position = 'below')),
+                                   spk_l = colDef(
+                                      name = '',
+                                      width = 150,
+                                      cell = function(value, index) adlbc$spk_l[[index]]
+                                   ),
+                                   spk   = colDef(show = FALSE),
+                                   N     = colDef(show = FALSE),
+                                   N_a   = colDef(show = FALSE),
+                                   MIN_a = colDef(show = FALSE),
+                                   MAX_a = colDef(show = FALSE),
+                                   A1HI  = colDef(show = FALSE),
+                                   A1LO = colDef(
+                                      name = "Analy Range (LO-<u>HI</u>)",
+                                      html = TRUE,
+                                      width = 100,
+                                      cell = merge_column(
+                                         adlbc,
+                                         weight = 'normal',
+                                         merged_name = "A1HI",
+                                         merged_size  = 14,
+                                         merged_color = 'black',
+                                         merged_decoration = 'underline',
+                                         spacing = 2,
+                                      )
+                                   ),
+                                   MAX = colDef(show = FALSE),
+                                   MIN = colDef(
+                                      name = "Subj Range (LO-<u>HI</u>)",
+                                      html = TRUE,
+                                      width = 100,
+                                      cell = merge_column(
+                                         adlbc,
+                                         weight = 'normal',
+                                         merged_name = "MAX",
+                                         merged_size  = 14,
+                                         merged_color = 'black',
+                                         merged_decoration = 'underline',
+                                         spacing = 3,
+                                      )
+                                   )
+                                )
+                      )
+                   }
+                ),
+                adlbh = colDef(
+                   name = 'ADLBH',
+                   filterable = FALSE,
+                   cell = function() htmltools::tags$button("HEM"),
+                   details = function(index){
+                      reactable(.$adlbh[[index]],
+                                bordered = TRUE,
+                                highlight = TRUE,
+                                searchable = TRUE,
+                                filterable = TRUE,
+                                pagination = FALSE,
+                                height = 500,
+                                theme = fivethirtyeight(),
+                                columns = list(
+                                   PARCAT1 = colDef(show = FALSE),
+                                   PARAM = colDef(show = FALSE),
+                                   PARAMCD = colDef(
+                                      name = "PARAM",
+                                      width = 250,
+                                      vAlign = 'center',
+                                      cell = merge_column( 
+                                         adlbc,
+                                         merged_name = "PARAM",
+                                         merged_position = 'below')),
+                                   spk = colDef(
+                                      name = '',
+                                      width = 150,
+                                      cell = react_sparkline(
+                                         .$adlbh[[index]],
+                                         highlight_points =
+                                            highlight_points(
+                                               first = 'gray',
+                                               min = "red",
+                                               max = "blue",
+                                               last = 'gray'),
+                                         labels = c('first','min','max','last'),
+                                         statline = "mean",
+                                         height = 50)
+                                   ),
+                                   A1HI = colDef(show = FALSE),
+                                   A1LO = colDef(
+                                      name = "Analy Range (LO-<u>HI</u>)",
+                                      html = TRUE,
+                                      width = 100,
+                                      cell = merge_column(
+                                         adlbh,
+                                         weight = 'normal',
+                                         merged_name = "A1HI",
+                                         merged_size  = 14,
+                                         merged_color = 'black',
+                                         merged_decoration = 'underline',
+                                         spacing = 2,
+                                      )
+                                   ),
+                                   MAX = colDef(show = FALSE),
+                                   MIN = colDef(
+                                      name = "Subj Range (LO-<u>HI</u>)",
+                                      html = TRUE,
+                                      width = 100,
+                                      cell = merge_column(
+                                         adlbh,
+                                         weight = 'normal',
+                                         merged_name = "MAX",
+                                         merged_size  = 14,
+                                         merged_color = 'black',
+                                         merged_decoration = 'underline',
+                                         spacing = 3,
+                                      )
+                                   )
+                                )
+                      )
+                   }
+                ),
+                adlbhy = colDef(
+                   name = 'ADLBHY',
+                   filterable = FALSE,
+                   cell = function() htmltools::tags$button("HYLAW"),
+                   details = function(index){
+                      reactable(.$adlbhy[[index]],
+                                bordered = TRUE,
+                                highlight = TRUE,
+                                searchable = TRUE,
+                                filterable = TRUE,
+                                pagination = FALSE,
+                                height = 500,
+                                theme = fivethirtyeight(),
+                                columns = list(
+                                   PARCAT1 = colDef(show = FALSE),
+                                   PARAM = colDef(show = FALSE),
+                                   PARAMCD = colDef(
+                                      name = "PARAM",
+                                      width = 250,
+                                      vAlign = 'center',
+                                      cell = merge_column( 
+                                         adlbhy,
+                                         merged_name = "PARAM",
+                                         merged_position = 'below')),
+                                   spk = colDef(
+                                      name = '',
+                                      width = 150,
+                                      cell = react_sparkline(
+                                         .$adlbhy[[index]],
+                                         highlight_points =
+                                            highlight_points(
+                                               first = 'gray',
+                                               min = "red",
+                                               max = "blue",
+                                               last = 'gray'),
+                                         labels = c('first','min','max','last'),
+                                         statline = "mean",
+                                         height = 50)
+                                   ),
+                                   A1HI = colDef(show = FALSE),
+                                   A1LO = colDef(
+                                      name = "Analy Range (LO-<u>HI</u>)",
+                                      html = TRUE,
+                                      width = 100,
+                                      cell = merge_column(
+                                         adlbhy,
+                                         weight = 'normal',
+                                         merged_name = "A1HI",
+                                         merged_size  = 14,
+                                         merged_color = 'black',
+                                         merged_decoration = 'underline',
+                                         spacing = 2,
+                                      )
+                                   ),
+                                   MAX = colDef(show = FALSE),
+                                   MIN = colDef(
+                                      name = "Subj Range (LO-<u>HI</u>)",
+                                      html = TRUE,
+                                      width = 100,
+                                      cell = merge_column(
+                                         adlbhy,
+                                         weight = 'normal',
+                                         merged_name = "MAX",
+                                         merged_size  = 14,
+                                         merged_color = 'black',
+                                         merged_decoration = 'underline',
+                                         spacing = 3,
+                                      )
+                                   )
+                                )
+                      )
+                   }
+                )
+             ) 
+   )%>% 
+   google_font(font_family = "Ubuntu Mono")
+```
+
+Definitions {data-orientation=rows data-icon="fa-file-pdf"}
+===================================== 
+
+```{r out.height = "800px", out.width='1000px'}
+knitr::include_graphics("./dat/dataguide.pdf")
+```
