@@ -3,11 +3,10 @@ title: "Patient Profiler (Proof of Concept)"
 date:  "`r format(Sys.time(),format='%A %d %b %Y')`" 
 output: 
    flexdashboard::flex_dashboard:
-   vertical_layout: fill
-   # vertical_layout: scroll
-   self_contained: true
-   theme: default
-   source_code: embed
+    vertical_layout: fill
+    self_contained: true
+    theme: default
+    source_code: "https://github.com/agstn/PatientProfiler"
 ---
 
 
@@ -47,7 +46,7 @@ id <- c('01-701-1148',
         '01-704-1445',
         '01-718-1371',
         '01-718-1427',
-        sample(data$ADSL$USUBJID, 20)) %>% 
+        sample(data$ADSL$USUBJID, 40)) %>% 
    unique()
 ```
 
@@ -333,6 +332,7 @@ d_all %>%
                    header = JS('function(column) {return column.name + `<div style="color: #999">kg/m<sup>2</sup></div>`}'),
                    cell = data_bars(
                       .,
+                      number_fmt = scales::number_format(accuracy = 0.1),
                       fill_color_ref = "BMIBL_COL",
                       text_position = "outside-base",
                       box_shadow = TRUE,
