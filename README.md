@@ -11,4 +11,4 @@ This [months (Presented on **June 8thth, 2022**) Wonderful-Wednesdays]( https://
 
 In order to explore different possibilities, sparklines are generated with [sparkline](https://cran.r-project.org/web/packages/sparkline/index.html) or [react_sparkline](https://kcuilla.github.io/reactablefmtr/articles/sparklines.html) the former allowing the display of normal ranges, while the later, doesn’t have those capability without extra coding. I mention this because the goal of my efforts was not on working all the details need it for clinical use but on how to generate highly nested dataset into a single table. 
 
-<img src="https://raw.githubusercontent.com/agstn/PatientProfiler/main/PatientProfiler.png" width="90%" height="90%">
+<img src="https://raw.githubusercontent.com/agstn/PatientProfiler/main/PatientProfiler.png" width="100%" height="100%">
